@@ -1,49 +1,136 @@
-import React, { useState, useEffect } from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useMemo, useState } from "react";
+import "./App.css";
+import Header from "./components/Header";
+import NotesList from "./components/NotesList";
+import NoteModal from "./components/NoteModal";
+import ConfirmDialog from "./components/ConfirmDialog";
+import Toast from "./components/Toast";
+import { NotesProvider, useNotes } from "./context/NotesContext";
+import { matchesQuery, sortNotes } from "./utils/notes";
+import { useDebouncedValue } from "./hooks/useDebouncedValue";
 
-// PUBLIC_INTERFACE
-function App() {
-  const [theme, setTheme] = useState('light');
+function AppShell() {
+  const { state, actions, toast } = useNotes();
 
-  // Effect to apply theme to document element
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+  const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query, 120);
 
-  // PUBLIC_INTERFACE
-  const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+  const [noteModalOpen, setNoteModalOpen] = useState(false);
+  const [noteModalMode, setNoteModalMode] = useState("create"); // "create" | "edit"
+  const [activeNote, setActiveNote] = useState(null);
+
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [noteToDelete, setNoteToDelete] = useState(null);
+
+  const visibleNotes = useMemo(() => {
+    const filtered = state.notes.filter((n) => matchesQuery(n, debouncedQuery));
+    return sortNotes(filtered);
+  }, [state.notes, debouncedQuery]);
+
+  const openCreate = () => {
+    setActiveNote(null);
+    setNoteModalMode("create");
+    setNoteModalOpen(true);
+  };
+
+  const openEdit = (note) => {
+    setActiveNote(note);
+    setNoteModalMode("edit");
+    setNoteModalOpen(true);
+  };
+
+  const requestDelete = (note) => {
+    setNoteToDelete(note);
+    setConfirmOpen(true);
+  };
+
+  const confirmDelete = () => {
+    if (noteToDelete?.id) actions.deleteNote(noteToDelete.id);
+    setConfirmOpen(false);
+    setNoteToDelete(null);
+  };
+
+  const cancelDelete = () => {
+    setConfirmOpen(false);
+    setNoteToDelete(null);
+  };
+
+  const onSaveModal = (payload) => {
+    if (noteModalMode === "edit" && activeNote?.id) {
+      actions.updateNote(activeNote.id, payload);
+    } else {
+      actions.createNote(payload);
+    }
+    setNoteModalOpen(false);
+    setActiveNote(null);
+  };
+
+  const onTogglePin = (note) => {
+    if (note?.id) actions.togglePin(note.id);
   };
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <button 
-          className="theme-toggle" 
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-        >
-          {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
-        </button>
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <p>
-          Current theme: <strong>{theme}</strong>
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div className="AppRoot">
+      <Header query={query} onQueryChange={setQuery} onNewNote={openCreate} />
+
+      <main className="Main">
+        <div className="Toolbar" role="region" aria-label="Notes toolbar">
+          <div className="ToolbarLeft">
+            <div className="CountPill" aria-label={`${visibleNotes.length} notes`}>
+              {visibleNotes.length} {visibleNotes.length === 1 ? "note" : "notes"}
+            </div>
+            {debouncedQuery?.trim() ? (
+              <div className="FilterPill" aria-label="Active search filter">
+                Filtering: “{debouncedQuery.trim()}”
+              </div>
+            ) : null}
+          </div>
+
+          <div className="ToolbarRight">
+            <button type="button" className="Button ButtonPrimary" onClick={openCreate}>
+              New note
+            </button>
+          </div>
+        </div>
+
+        <NotesList notes={visibleNotes} onEdit={openEdit} onDelete={requestDelete} onTogglePin={onTogglePin} />
+      </main>
+
+      <NoteModal
+        isOpen={noteModalOpen}
+        mode={noteModalMode}
+        initialNote={activeNote}
+        onClose={() => {
+          setNoteModalOpen(false);
+          setActiveNote(null);
+        }}
+        onSave={onSaveModal}
+      />
+
+      <ConfirmDialog
+        isOpen={confirmOpen}
+        title="Delete note?"
+        description={
+          noteToDelete
+            ? `This will permanently delete “${noteToDelete.title}”. You can’t undo this action.`
+            : "This will permanently delete the note. You can’t undo this action."
+        }
+        confirmText="Delete"
+        onConfirm={confirmDelete}
+        onCancel={cancelDelete}
+      />
+
+      <Toast toast={toast} />
     </div>
   );
 }
 
-export default App;
+// PUBLIC_INTERFACE
+export default function App() {
+  /** Application root: wires NotesProvider and renders the SPA. */
+  return (
+    <NotesProvider>
+      <AppShell />
+    </NotesProvider>
+  );
+}
